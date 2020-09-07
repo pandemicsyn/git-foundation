@@ -11,6 +11,6 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	golang.org/x/oauth2 v0.0.0-20200902213428-5d25da1a8d43 // indirect
 	google.golang.org/api v0.31.0 // indirect
-	gopkg.in/src-d/go-git.v4 v4.13.1 // indirect
+	gopkg.in/src-d/go-git.v4 v4.13.1
 	honnef.co/go/tools v0.0.1-2020.1.4
 )
