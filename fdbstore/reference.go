@@ -17,7 +17,7 @@ type SlowRef struct {
 }
 
 func (s *FDBStore) Reference(n plumbing.ReferenceName) (*plumbing.Reference, error) {
-	ret, err := s.db.Transact(func(tr fdb.Transaction) (ret interface{}, e error) {
+	ret, err := s.db.ReadTransact(func(tr fdb.ReadTransaction) (ret interface{}, e error) {
 		ret = tr.Get(s.genRefKey(n)).MustGet()
 		return
 	})
@@ -117,7 +117,7 @@ func (s *FDBStore) IterReferences() (storer.ReferenceIter, error) {
 		return nil, errors.Wrap(err, "failed to configure prefix key for refs iter")
 	}
 
-	_, err = s.db.Transact(func(tr fdb.Transaction) (ret interface{}, e error) {
+	_, err = s.db.ReadTransact(func(tr fdb.ReadTransaction) (ret interface{}, e error) {
 		resp, err := tr.GetRange(rkey, fdb.RangeOptions{}).GetSliceWithError()
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get slice on refs iter get rance call")

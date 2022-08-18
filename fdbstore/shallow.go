@@ -9,7 +9,7 @@ import (
 )
 
 func (s *FDBStore) Shallow() ([]plumbing.Hash, error) {
-	ret, err := s.db.Transact(func(tr fdb.Transaction) (ret interface{}, e error) {
+	ret, err := s.db.ReadTransact(func(tr fdb.ReadTransaction) (ret interface{}, e error) {
 		ret = tr.Get(fdb.Key(s.genShallowKey())).MustGet()
 		return
 	})
@@ -39,10 +39,6 @@ func (s *FDBStore) SetShallow(hash []plumbing.Hash) error {
 		return
 	})
 	return err
-}
-
-func (s *FDBStore) DebugGenShallowKey() fdb.Key {
-	return s.genStorageKey(shallowOpKey)
 }
 
 func (s *FDBStore) genShallowKey() fdb.Key {

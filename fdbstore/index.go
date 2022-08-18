@@ -9,7 +9,7 @@ import (
 )
 
 func (s *FDBStore) Index() (*index.Index, error) {
-	ret, err := s.db.Transact(func(tr fdb.Transaction) (ret interface{}, e error) {
+	ret, err := s.db.ReadTransact(func(tr fdb.ReadTransaction) (ret interface{}, e error) {
 		ret = tr.Get(fdb.Key(s.genIndexKey())).MustGet()
 		return
 	})
