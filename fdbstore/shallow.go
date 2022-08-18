@@ -13,12 +13,18 @@ func (s *FDBStore) Shallow() ([]plumbing.Hash, error) {
 		ret = tr.Get(fdb.Key(s.genShallowKey())).MustGet()
 		return
 	})
+
 	if err != nil {
 		return nil, err
 	}
+
+	if isNilKey(ret) {
+		return nil, nil
+	}
+
 	var h []plumbing.Hash
 	if err = json.Unmarshal(ret.([]byte), &h); err != nil {
-		s.log.WithError(err).Error("failed to unmarshal shallow")
+		s.log.WithError(err).WithField("keyis", s.genShallowKey().String()).WithField("value", ret.([]byte)).Error("failed to unmarshal shallow")
 	}
 	return h, err
 }
@@ -33,6 +39,10 @@ func (s *FDBStore) SetShallow(hash []plumbing.Hash) error {
 		return
 	})
 	return err
+}
+
+func (s *FDBStore) DebugGenShallowKey() fdb.Key {
+	return s.genStorageKey(shallowOpKey)
 }
 
 func (s *FDBStore) genShallowKey() fdb.Key {

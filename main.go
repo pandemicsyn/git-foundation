@@ -16,15 +16,40 @@ import (
 
 func setupFDB() fdb.Database {
 	// Different API versions may expose different runtime behaviors.
-	fdb.MustAPIVersion(620)
+	fdb.MustAPIVersion(710)
 	// Open the default database from the system cluster
 	return fdb.MustOpenDefault()
+}
+
+func canaryWriteRead(l logrus.FieldLogger, db fdb.Database, s *fdbstore.FDBStore) {
+	_, err := db.Transact(func(tr fdb.Transaction) (ret interface{}, e error) {
+		tr.Set(fdb.Key("hello"), []byte("world"))
+		return
+	})
+	if err != nil {
+		l.Fatalf("Unable to set FDB database value (%v)", err)
+	}
+
+	ret, err := db.Transact(func(tr fdb.Transaction) (ret interface{}, e error) {
+		ret = tr.Get(fdb.Key("hello")).MustGet()
+		return
+	})
+	if err != nil {
+		l.Fatalf("Unable to read FDB database value (%v)", err)
+	}
+
+	v := ret.([]byte)
+	if string(v) != "world" {
+		l.Fatalf("FDB database value is not correct (%v)", v)
+	}
 }
 
 func main() {
 
 	var url string
+	var runClone bool
 	flag.StringVar(&url, "url", "https://github.com/pandemicsyn/git-foundation.git", "url to clone")
+	flag.BoolVar(&runClone, "run-clone", true, "whether to run the clone")
 	flag.Parse()
 
 	db := setupFDB()
@@ -37,11 +62,17 @@ func main() {
 		l.WithError(err).Fatal("unable to initalize fdb based store")
 	}
 
-	clone(l, s, url)
+	canaryWriteRead(l, db, s)
+
+	if runClone {
+		clone(l, s, url)
+	}
 
 	l.Info("clone complete")
 
 	log(l, s)
+
+	// test fdb write
 
 }
 

@@ -54,3 +54,7 @@ func getKey(tor fdb.Transactor, k fdb.Key) (int64, error) {
 		return numVal, nil
 	}
 }
+
+func isNilKey(val interface{}) bool {
+	return val == nil || len(val.([]byte)) == 0
+}

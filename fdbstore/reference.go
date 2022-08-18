@@ -32,7 +32,7 @@ func (s *FDBStore) Reference(n plumbing.ReferenceName) (*plumbing.Reference, err
 
 	ref := ret.([]byte)
 	if len(ref) == 0 {
-		s.log.Debug("ref is 0")
+		s.log.WithField("ref_name", n).Debug("ref is 0")
 		return nil, plumbing.ErrReferenceNotFound
 	}
 	s.log.Debugf("ref: %s", ref)
