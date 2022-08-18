@@ -32,11 +32,17 @@ func NewStorage(log logrus.FieldLogger, db fdb.Database, ns, url string) (*FDBSt
 	if err != nil {
 		return nil, err
 	}
+
 	s := &FDBStore{memStore.ObjectStorage, memStore.ModuleStorage, log, db, dir, make(map[string]subspace.Subspace)}
 
 	// TODO: subspace this out further ?
 	s.ss[refOpKey] = s.d.Sub(refOpKey)
 	return s, nil
+}
+
+func (s *FDBStore) Remove() error {
+	err := clear_subspace(s.db, s.d)
+	return err
 }
 
 func (s *FDBStore) genStorageKey(op string) fdb.Key {

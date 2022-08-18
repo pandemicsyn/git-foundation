@@ -47,9 +47,9 @@ func canaryWriteRead(l logrus.FieldLogger, db fdb.Database, s *fdbstore.FDBStore
 func main() {
 
 	var url string
-	var runClone bool
+	var purge bool
 	flag.StringVar(&url, "url", "https://github.com/pandemicsyn/git-foundation.git", "url to clone")
-	flag.BoolVar(&runClone, "run-clone", true, "whether to run the clone")
+	flag.BoolVar(&purge, "purge", true, "purge the database prior to cloning")
 	flag.Parse()
 
 	db := setupFDB()
@@ -64,22 +64,19 @@ func main() {
 
 	canaryWriteRead(l, db, s)
 
-	if runClone {
-		clone(l, s, url)
+	if purge {
+		if err := s.Remove(); err != nil {
+			l.WithError(err).Fatal("unable to clear all data from fdb")
+		}
 	}
 
+	clone(l, s, url)
 	l.Info("clone complete")
 
 	log(l, s)
-
-	// test fdb write
-
 }
 
 func clone(l logrus.FieldLogger, s storage.Storer, url string) {
-	// Clone the given repository, all the objects, references and
-	// configuration sush as remotes, are save into the Aerospike database
-	// using the custom storer
 	l.Info("git clone ", url)
 
 	_, err := git.Clone(s, nil, &git.CloneOptions{
@@ -87,12 +84,16 @@ func clone(l logrus.FieldLogger, s storage.Storer, url string) {
 		Progress: os.Stdout,
 	})
 	if err != nil {
+		if err == git.ErrRepositoryAlreadyExists {
+			l.Fatal("repository already exists")
+			return
+		}
 		l.WithError(err).Fatal("clone failed")
 	}
 }
 
 func log(l logrus.FieldLogger, s storage.Storer) {
-	// We open the repository using as storer the custom implementation
+	// open repo and print the git log
 	r, err := git.Open(s, nil)
 	if err != nil {
 		l.Fatal(err)
@@ -100,7 +101,6 @@ func log(l logrus.FieldLogger, s storage.Storer) {
 
 	// Prints the history of the repository starting in the current HEAD
 	l.Info("git log --oneline")
-
 	ref, err := r.Head()
 	if err != nil {
 		l.Fatal(err)
@@ -112,7 +112,6 @@ func log(l logrus.FieldLogger, s storage.Storer) {
 		l.Fatal(err)
 	}
 
-	// ... just iterates over the commits, printing it
 	err = cIter.ForEach(func(c *object.Commit) error {
 		fmt.Println(c)
 		return nil

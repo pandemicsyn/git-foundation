@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
+	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 )
 
 func incrKey(tor fdb.Transactor, k fdb.Key) error {
@@ -57,4 +58,12 @@ func getKey(tor fdb.Transactor, k fdb.Key) (int64, error) {
 
 func isNilKey(val interface{}) bool {
 	return val == nil || len(val.([]byte)) == 0
+}
+
+func clear_subspace(trtr fdb.Transactor, sub subspace.Subspace) error {
+	_, err := trtr.Transact(func(tr fdb.Transaction) (interface{}, error) {
+		tr.ClearRange(sub)
+		return nil, nil
+	})
+	return err
 }
