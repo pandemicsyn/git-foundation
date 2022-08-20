@@ -14,10 +14,10 @@ const (
 	configOpKey  = "config"
 	indexOpKey   = "index"
 	shallowOpKey = "shallow"
+	objectOpKey  = "obj"
 )
 
 type FDBStore struct {
-	memory.ObjectStorage
 	memory.ModuleStorage
 	log logrus.FieldLogger
 	db  fdb.Database
@@ -33,10 +33,11 @@ func NewStorage(log logrus.FieldLogger, db fdb.Database, ns, url string) (*FDBSt
 		return nil, err
 	}
 
-	s := &FDBStore{memStore.ObjectStorage, memStore.ModuleStorage, log, db, dir, make(map[string]subspace.Subspace)}
+	s := &FDBStore{memStore.ModuleStorage, log, db, dir, make(map[string]subspace.Subspace)}
 
 	// TODO: subspace this out further ?
 	s.ss[refOpKey] = s.d.Sub(refOpKey)
+	s.ss[objectOpKey] = s.d.Sub(objectOpKey)
 	return s, nil
 }
 
