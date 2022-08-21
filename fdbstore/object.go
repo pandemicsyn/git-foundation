@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
@@ -81,7 +82,8 @@ func storeObject(s *FDBStore, o plumbing.EncodedObject) error {
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to encode object header for storage")
 		}
-		tr.Set(s.genObjectKey(o.Hash(), "header"), payload)
+		tr.Set(s.genObjectMetaKey(o.Hash(), "header"), payload)
+		tr.Set(s.genObjectMetaKeyByType(o.Type(), o.Hash(), "header"), payload)
 		l.Debug("stored header object")
 		return nil, nil
 	})
@@ -89,24 +91,33 @@ func storeObject(s *FDBStore, o plumbing.EncodedObject) error {
 }
 
 func (s *FDBStore) HasEncodedObject(h plumbing.Hash) error {
+	_, err := s.hasEncodedObject(h)
+	return err
+}
+
+func (s *FDBStore) hasEncodedObject(h plumbing.Hash) (*ObjectHeader, error) {
 	ret, err := s.db.ReadTransact(func(tr fdb.ReadTransaction) (ret interface{}, e error) {
-		ret = tr.Get(s.genObjectKey(h, "header")).MustGet()
+		ret = tr.Get(s.genObjectMetaKey(h, "header")).MustGet()
 		return
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if isNilKey(ret) {
 		s.log.WithField("hash", h).Warn("object not found")
-		return plumbing.ErrObjectNotFound
+		return nil, plumbing.ErrObjectNotFound
 	}
 	s.log.WithField("hash", h).Debug("object found")
-	return nil
+	header := new(ObjectHeader)
+	if err := json.Unmarshal(ret.([]byte), header); err != nil {
+		return header, errors.Wrap(err, "failed to decode object header")
+	}
+	return header, nil
 }
 
 func (s *FDBStore) EncodedObjectSize(h plumbing.Hash) (size int64, err error) {
 	ret, err := s.db.ReadTransact(func(tr fdb.ReadTransaction) (ret interface{}, e error) {
-		ret = tr.Get(s.genObjectKey(h, "header")).MustGet()
+		ret = tr.Get(s.genObjectMetaKey(h, "header")).MustGet()
 		return
 	})
 	if err != nil {
@@ -136,9 +147,9 @@ func (s *FDBStore) getEncodedObject(t plumbing.ObjectType, h plumbing.Hash) (plu
 	o.SetType(t)
 	_, err := s.db.ReadTransact(func(tr fdb.ReadTransaction) (ret interface{}, e error) {
 		header := new(ObjectHeader)
-		ret = tr.Get(s.genObjectKey(h, "header")).MustGet()
+		ret = tr.Get(s.genObjectMetaKey(h, "header")).MustGet()
 		if isNilKey(ret) {
-			s.log.WithField("hash", h).Warn("object not found on attempted get")
+			s.log.WithField("hash", h).WithField("type", t).Warn("object header not found on attempted get")
 			return nil, plumbing.ErrObjectNotFound
 		}
 		if err := json.Unmarshal(ret.([]byte), header); err != nil {
@@ -162,22 +173,53 @@ func (s *FDBStore) getEncodedObject(t plumbing.ObjectType, h plumbing.Hash) (plu
 	return o, err
 }
 
+// TODO: optimize, this is functional but slow and wasteful
 func (s *FDBStore) IterEncodedObjects(t plumbing.ObjectType) (storer.EncodedObjectIter, error) {
 	s.log.Warn("IterEncodedObjects not implemented")
 	var series []plumbing.EncodedObject
-	switch t {
-	case plumbing.AnyObject:
-		series = []plumbing.EncodedObject{}
-	case plumbing.CommitObject:
-		series = []plumbing.EncodedObject{}
-	case plumbing.TreeObject:
-		series = []plumbing.EncodedObject{}
-	case plumbing.BlobObject:
-		series = []plumbing.EncodedObject{}
-	case plumbing.TagObject:
-		series = []plumbing.EncodedObject{}
+
+	if t == plumbing.AnyObject {
+		return nil, errors.New("IterEncodedObjects not implemented for AnyObject")
+	}
+
+	matchedHashes, err := s.getMetaByType(t)
+	if err != nil {
+		return nil, err
+	}
+	series = make([]plumbing.EncodedObject, len(matchedHashes))
+	for _, h := range matchedHashes {
+		o, err := s.getEncodedObject(t, h)
+		if err != nil {
+			return nil, err
+		}
+		series = append(series, o)
 	}
 	return storer.NewEncodedObjectSliceIter(series), nil
+}
+
+func (s *FDBStore) getMetaByType(t plumbing.ObjectType) ([]plumbing.Hash, error) {
+	ret, err := s.db.ReadTransact(func(tr fdb.ReadTransaction) (ret interface{}, e error) {
+		start, err := fdb.PrefixRange(s.ss[objectOpKey].Pack(tuple.Tuple{t.String()}))
+		if err != nil {
+			log.Fatal(err)
+		}
+		ret, e = tr.GetRange(start, fdb.RangeOptions{Mode: fdb.StreamingModeWantAll}).GetSliceWithError()
+		if e != nil {
+			log.Fatal(err)
+		}
+		return
+	})
+	if err != nil {
+		return nil, err
+	}
+	if isNilKey(ret) {
+		return nil, nil
+	}
+	hashes := make([]plumbing.Hash, 0, len(ret.([]fdb.KeyValue)))
+	for _, kv := range ret.([]fdb.KeyValue) {
+		hashes = append(hashes, plumbing.NewHash(kv.Key.String()[len(s.ss[objectOpKey].Pack(tuple.Tuple{t.String()}))+1:]))
+	}
+	return hashes, nil
 }
 
 func (s *FDBStore) ObjectPacks() ([]plumbing.Hash, error) {
@@ -196,12 +238,20 @@ func (s *FDBStore) DeleteLooseObject(plumbing.Hash) error {
 	return errNotSupported
 }
 
-// key = dir[url]/sub[obj]/tuple[hash, meta]
-func (s *FDBStore) genObjectKey(h plumbing.Hash, meta string) fdb.Key {
-	return s.ss[objectOpKey].Pack(tuple.Tuple{h.String(), meta})
+// Currently key layout is optimized to assume we're going to retrieve object by has the majority of the time
+// (or where the object type is ANY). That does mean that we currently do two header writes per object.
+// key = dir[url]/sub[obj]/tuple[hash, "meta", meta]
+func (s *FDBStore) genObjectMetaKey(h plumbing.Hash, meta string) fdb.Key {
+	return s.ss[objectOpKey].Pack(tuple.Tuple{h.String(), "meta", meta})
 }
 
-// key = dir[url]/sub[obj]/tuple[hash, part]
+// key = dir[url]/sub[obj]/tuple[object_type, hash, "meta"]
+func (s *FDBStore) genObjectMetaKeyByType(t plumbing.ObjectType, h plumbing.Hash, meta string) fdb.Key {
+	return s.ss[objectOpKey].Pack(tuple.Tuple{t.String(), h.String(), "meta", meta})
+
+}
+
+// key = dir[url]/sub[obj]/tuple[hash, "part", part]
 func (s *FDBStore) genObjectPartKey(h plumbing.Hash, part int) fdb.Key {
-	return s.ss[objectOpKey].Pack(tuple.Tuple{h.String(), part})
+	return s.ss[objectOpKey].Pack(tuple.Tuple{h.String(), "part", part})
 }
